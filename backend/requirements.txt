@@ -1,0 +1,61 @@
+# FastAPI Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+
+# Database
+sqlalchemy==2.0.25
+alembic==1.13.1
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+
+# Pydantic for validation
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Authentication
+PyJWT==2.8.0
+passlib==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.6
+
+# File handling
+aiofiles==23.2.1
+mutagen==1.47.0  # Audio metadata and duration calculation
+
+# Redis and Celery
+redis==5.0.1
+celery==5.3.6
+
+# HTTP client
+httpx==0.26.0
+
+# Date parsing & utility
+python-dateutil==2.8.2
+
+# Encryption helpers (Fernet)
+cryptography==41.0.3
+
+# AI/ML
+openai==1.10.0
+
+# Local Whisper removed - using Groq API (free) for transcription
+# ffmpeg-python kept for potential audio processing
+ffmpeg-python==0.2.0
+
+# AWS S3
+boto3==1.34.28
+
+# Environment variables
+python-dotenv==1.0.0
+
+# Email validation
+email-validator==2.1.0
+
+# UUID support (commented out - causes build issues on Windows)
+# python-ulid==1.1.0
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+aiosqlite==0.19.0

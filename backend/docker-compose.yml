@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    container_name: synkro-postgres
+    environment:
+      POSTGRES_USER: synkro
+      POSTGRES_PASSWORD: synkro123
+      POSTGRES_DB: synkro
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synkro"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - synkro-network
+
+  # Redis for caching and Celery
+  redis:
+    image: redis:7-alpine
+    container_name: synkro-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - synkro-network
+
+  # FastAPI backend (development)
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: synkro-backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://synkro:synkro123@postgres:5432/synkro
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      SECRET_KEY: your-development-secret-key-change-in-production-at-least-32-chars
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_BUCKET_NAME: ${AWS_BUCKET_NAME:-}
+      ALLOWED_ORIGINS: '["http://localhost:3000","http://localhost:3001"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - synkro-network
+
+  # Celery worker for background tasks
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: synkro-celery-worker
+    environment:
+      DATABASE_URL: postgresql+asyncpg://synkro:synkro123@postgres:5432/synkro
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      SECRET_KEY: your-development-secret-key-change-in-production-at-least-32-chars
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_BUCKET_NAME: ${AWS_BUCKET_NAME:-}
+    depends_on:
+      - postgres
+      - redis
+      - backend
+    volumes:
+      - .:/app
+    command: celery -A app.celery_app worker --loglevel=info
+    networks:
+      - synkro-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  synkro-network:
+    driver: bridge
