@@ -268,14 +268,16 @@ async def slack_demo_connect(
     response_model=SlackConnectResponse,
     summary="Start Slack OAuth flow — returns authorization URL",
 )
-async def slack_oauth_start() -> SlackConnectResponse:
+async def slack_oauth_start(
+    current_user: User = Depends(get_current_user),
+) -> SlackConnectResponse:
     """Return the Slack authorization URL.
 
     The frontend should redirect the user to ``authorization_url``.
     After consent Slack redirects to ``SLACK_REDIRECT_URI`` with ``code``.
     """
-    # authorization_url is a @classmethod — no instance required
-    url = slack_module.SlackService.authorization_url()
+    # Pass user ID as state so the callback can identify the user without a session
+    url = slack_module.SlackService.authorization_url(state=current_user.id)
     return SlackConnectResponse(authorization_url=url)
 
 
@@ -288,12 +290,12 @@ async def slack_oauth_callback(
     code: str,
     state: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ) -> RedirectResponse:
     """Handle the OAuth redirect from Slack.
 
     Exchanges the ``code`` for a bot access token, encrypts it,
     and upserts the Integration record for this user + workspace.
+    The ``state`` parameter carries the Synkro user ID set during oauth start.
     """
     frontend_base = settings.FRONTEND_URL or "http://localhost:3000"
     error_redirect = (
@@ -302,6 +304,16 @@ async def slack_oauth_callback(
     success_redirect = (
         f"{frontend_base}/dashboard/settings?integration=slack&status=success"
     )
+
+    # Resolve user from state (user ID passed during oauth start)
+    if not state:
+        logger.error("Slack OAuth callback missing state (user ID)")
+        return RedirectResponse(url=f"{error_redirect}&message=missing_state", status_code=302)
+    user_result = await db.execute(select(User).where(User.id == state))
+    current_user = user_result.scalar_one_or_none()
+    if not current_user:
+        logger.error("Slack OAuth callback: user not found for state=%s", state)
+        return RedirectResponse(url=f"{error_redirect}&message=user_not_found", status_code=302)
 
     # Use a token-less instance solely for the code exchange
     svc = slack_module.SlackService(token="")
@@ -319,8 +331,10 @@ async def slack_oauth_callback(
     bot_user_id: Optional[str] = data.get("bot_user_id")
     access_token: Optional[str] = data.get("access_token")
     scope: Optional[str] = data.get("scope")
-    # The Slack user ID of the person who authorized the app
-    authed_user_id: Optional[str] = data.get("authed_user", {}).get("id")
+    # The Slack user ID and user token of the person who authorized the app
+    authed_user: Dict[str, Any] = data.get("authed_user") or {}
+    authed_user_id: Optional[str] = authed_user.get("id")
+    user_access_token: Optional[str] = authed_user.get("access_token")
     # Capture webhook URL if the incoming-webhook scope was granted
     webhook_info: Dict[str, Any] = data.get("incoming_webhook") or {}
 
@@ -335,6 +349,9 @@ async def slack_oauth_callback(
     metadata: Dict[str, Any] = {"team_id": team_id, "bot_user_id": bot_user_id}
     if authed_user_id:
         metadata["authed_user_id"] = authed_user_id
+    if user_access_token:
+        metadata["user_access_token"] = encrypt_value(user_access_token)
+        logger.info("Captured user access token for user=%s slack_user=%s", current_user.id, authed_user_id)
     if webhook_info.get("url"):
         metadata["webhook_url"] = webhook_info["url"]
     if webhook_info.get("channel"):

@@ -45,6 +45,13 @@ _BOT_SCOPES: List[str] = [
     "mpim:write",
 ]
 
+# User-level scopes so we can read user-to-user DMs
+_USER_SCOPES: List[str] = [
+    "im:history",
+    "im:read",
+    "channels:history",
+]
+
 
 class SlackService:
     """Thin async wrapper around the Slack Web API.
@@ -171,6 +178,7 @@ class SlackService:
         params: Dict[str, str] = {
             "client_id": settings.SLACK_CLIENT_ID,
             "scope": ",".join(_BOT_SCOPES),
+            "user_scope": ",".join(_USER_SCOPES),
             "redirect_uri": settings.SLACK_REDIRECT_URI,
         }
         if state:
@@ -290,6 +298,51 @@ class SlackService:
             m for m in members
             if not m.get("is_bot") and not m.get("deleted") and m.get("id") != "USLACKBOT"
         ]
+
+    async def list_im_channels(self) -> List[Dict[str, Any]]:
+        """List all DM (im) channels accessible to this token.
+
+        Works with user tokens (xoxp-) that have ``im:read`` scope.
+
+        Returns:
+            List of channel dicts with ``id`` and ``user`` (Slack user ID).
+        """
+        channels: List[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+        while True:
+            params: Dict[str, Any] = {"types": "im", "limit": 200}
+            if cursor:
+                params["cursor"] = cursor
+            resp = await self._request("conversations.list", method="GET", params=params)
+            channels.extend(resp.get("channels", []))
+            cursor = resp.get("response_metadata", {}).get("next_cursor")
+            if not cursor:
+                break
+        return channels
+
+    async def get_channel_messages(
+        self,
+        channel_id: str,
+        limit: int = 50,
+        oldest: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch recent messages from a channel or DM.
+
+        Works with user tokens (xoxp-) that have ``im:history`` scope.
+
+        Args:
+            channel_id: Channel or DM ID.
+            limit     : Max number of messages (Slack max 999).
+            oldest    : Only return messages newer than this Unix timestamp string.
+
+        Returns:
+            List of message dicts.
+        """
+        params: Dict[str, Any] = {"channel": channel_id, "limit": limit}
+        if oldest:
+            params["oldest"] = oldest
+        resp = await self._request("conversations.history", method="GET", params=params)
+        return resp.get("messages", [])
 
     async def get_channel_info(self, channel_id: str) -> Dict[str, Any]:
         """Fetch channel metadata (requires ``channels:read`` scope).

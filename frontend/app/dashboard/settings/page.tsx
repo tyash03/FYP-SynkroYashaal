@@ -137,16 +137,15 @@ export default function SettingsPage() {
 
   // Slack OAuth start mutation
   const startSlackOAuthMutation = useMutation({
-    mutationFn: () => integrationsApi.connectSlackDemo(),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['integrations'] })
-      setIntegrationMessage({ type: 'success', text: 'Slack connected successfully!' })
-      setTimeout(() => setIntegrationMessage(null), 3000)
+    mutationFn: () => integrationsApi.startSlackOAuth(),
+    onSuccess: (res: any) => {
+      // Redirect user to Slack authorization page
+      window.location.href = res.data.authorization_url
     },
     onError: (err: any) => {
       setIntegrationMessage({
         type: 'error',
-        text: err.response?.data?.detail || 'Failed to connect Slack.',
+        text: err.response?.data?.detail || 'Failed to start Slack OAuth.',
       })
       setTimeout(() => setIntegrationMessage(null), 5000)
     },

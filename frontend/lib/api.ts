@@ -197,6 +197,16 @@ export const integrationsApi = {
   syncIntegration: (id: string) => api.post(`/api/integrations/${id}/sync`),
 }
 
+// Direct Messages API
+export const dmApi = {
+  getUsers: () => api.get('/api/dm/users'),
+  getConversations: () => api.get('/api/dm/conversations'),
+  getConversation: (userId: string) => api.get(`/api/dm/${userId}`),
+  sendMessage: (recipient_id: string, content: string) =>
+    api.post('/api/dm/send', { recipient_id, content }),
+  syncFromSlack: () => api.post<{ synced: number; message: string }>('/api/dm/sync-slack'),
+}
+
 // Analytics API
 export const analyticsApi = {
   getWorkload: (days = 30) => api.get(`/api/analytics/workload?days=${days}`),

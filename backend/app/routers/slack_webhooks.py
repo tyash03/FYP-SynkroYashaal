@@ -34,6 +34,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Integration, IntegrationPlatform, Message
+from app.models.direct_message import DirectMessage
+from app.models.user import User
 from app.services.slack_service import SlackService
 
 logger = logging.getLogger(__name__)
@@ -236,6 +238,56 @@ async def slack_events(
         event.get("user"),
         event.get("ts"),
     )
+
+    # ── 7b. For DM channels: also create a DirectMessage record ──────────────
+    # This syncs user-to-user Slack DMs into Synkro's native DM system in
+    # real-time when the Events API delivers message.im events.
+    # Requires: user tokens with im:history (user_scope in OAuth), and each
+    # user's authed_user_id stored in their Integration metadata.
+    if channel_type_evt == "im" and slack_sender_id:
+        # Find the Synkro user whose Slack ID matches the sender
+        sender_integration = next(
+            (i for i in all_integrations
+             if (i.platform_metadata or {}).get("authed_user_id") == slack_sender_id),
+            None,
+        )
+        # Find the Synkro user who owns this integration (the recipient)
+        # They are the one whose user token triggered delivery of this event
+        # (i.e. the integration record we resolved earlier)
+        if sender_integration and sender_integration.id != integration.id:
+            sender_synkro_id = sender_integration.user_id
+            recipient_synkro_id = integration.user_id
+        elif sender_integration and sender_integration.id == integration.id:
+            # Sender IS the integration owner — other party is not tracked
+            sender_synkro_id = integration.user_id
+            recipient_synkro_id = None
+        else:
+            # Try: sender is unknown in Synkro; recipient is integration owner
+            sender_synkro_id = None
+            recipient_synkro_id = integration.user_id
+
+        if sender_synkro_id and recipient_synkro_id:
+            # Dedup by slack_ts
+            slack_ts_val = event.get("ts", "")
+            dup_dm = await db.execute(
+                select(DirectMessage).where(DirectMessage.slack_ts == slack_ts_val)
+            )
+            if not dup_dm.scalar_one_or_none():
+                dm = DirectMessage(
+                    sender_id=sender_synkro_id,
+                    recipient_id=recipient_synkro_id,
+                    content=event.get("text", ""),
+                    created_at=datetime.utcfromtimestamp(ts_float),
+                    slack_ts=slack_ts_val,
+                )
+                db.add(dm)
+                await db.commit()
+                logger.info(
+                    "DirectMessage created from Slack DM: sender=%s recipient=%s ts=%s",
+                    sender_synkro_id,
+                    recipient_synkro_id,
+                    slack_ts_val,
+                )
 
     # ── 8. Enqueue background intent classification ───────────────────────────
     # Celery task runs outside the request cycle — webhook returns immediately

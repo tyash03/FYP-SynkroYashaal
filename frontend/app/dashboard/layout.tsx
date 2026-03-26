@@ -31,7 +31,7 @@ const navigation = [
   { name: 'Meetings', href: '/dashboard/meetings', icon: Video },
   { name: 'Emails', href: '/dashboard/emails', icon: Mail },
   { name: 'Slack', href: '/dashboard/slack', icon: MessageSquare },
-  { name: 'Direct Messages', href: '/dashboard/slack/dms', icon: AtSign },
+  { name: 'Direct Messages', href: '/dashboard/messages', icon: AtSign },
   { name: 'Chat', href: '/dashboard/chat', icon: MessageSquare },
   { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
   { name: 'Settings', href: '/dashboard/settings', icon: Settings },

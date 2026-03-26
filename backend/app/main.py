@@ -12,6 +12,7 @@ from app.database import init_db, close_db
 from app.routers import auth, tasks, meetings, chat, integrations, analytics, emails, messages
 from app.routers import admin
 from app.routers import slack_webhooks
+from app.routers import direct_messages
 
 # Lifespan context manager for startup and shutdown events
 @asynccontextmanager
@@ -101,6 +102,7 @@ app.include_router(analytics.router)
 app.include_router(emails.router)
 app.include_router(messages.router)
 app.include_router(admin.router)
+app.include_router(direct_messages.router)
 
 # Root endpoint
 @app.get("/", tags=["Root"])
