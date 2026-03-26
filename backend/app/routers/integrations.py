@@ -282,6 +282,20 @@ async def slack_oauth_start(
 
 
 @router.get(
+    "/oauth/slack/callback",
+    summary="Slack OAuth callback (legacy path alias)",
+    include_in_schema=False,
+)
+async def slack_oauth_callback_legacy(
+    code: str,
+    state: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    """Alias for /slack/callback — handles legacy redirect_uri."""
+    return await slack_oauth_callback(code=code, state=state, db=db)
+
+
+@router.get(
     "/slack/callback",
     summary="Slack OAuth callback — exchanges code for access token",
     include_in_schema=False,
