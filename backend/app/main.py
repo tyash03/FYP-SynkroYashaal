@@ -119,6 +119,7 @@ async def root():
     }
 
 
+
 # Health check endpoint
 @app.get("/health", tags=["Health"])
 async def health_check():
