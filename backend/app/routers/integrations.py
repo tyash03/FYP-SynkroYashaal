@@ -376,11 +376,14 @@ async def slack_oauth_callback(
             and_(
                 Integration.user_id == current_user.id,
                 Integration.platform == IntegrationPlatform.SLACK,
-                Integration.platform_metadata["team_id"].astext == team_id,
             )
         )
     )
-    integration = existing_q.scalar_one_or_none()
+    all_user_slack = existing_q.scalars().all()
+    integration = next(
+        (i for i in all_user_slack if (i.platform_metadata or {}).get("team_id") == team_id),
+        None,
+    )
     encrypted_token = encrypt_value(access_token)
 
     if integration:
