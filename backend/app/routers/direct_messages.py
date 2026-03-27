@@ -30,7 +30,6 @@ async def list_team_members(
     """List all team members the current user can DM."""
     result = await db.execute(
         select(User).where(
-            User.team_id == current_user.team_id,
             User.id != current_user.id,
             User.is_active == True,
         )
@@ -98,10 +97,9 @@ async def get_conversation(
     db: AsyncSession = Depends(get_db),
 ):
     """Get all messages between current user and another user."""
-    # Verify the other user exists and is in the same team
     result = await db.execute(select(User).where(User.id == user_id))
     other = result.scalars().first()
-    if not other or other.team_id != current_user.team_id:
+    if not other:
         raise HTTPException(status_code=404, detail="User not found")
 
     msgs_result = await db.execute(
@@ -150,7 +148,7 @@ async def send_message(
     """Send a direct message to a team member."""
     result = await db.execute(select(User).where(User.id == body.recipient_id))
     recipient = result.scalars().first()
-    if not recipient or recipient.team_id != current_user.team_id:
+    if not recipient:
         raise HTTPException(status_code=404, detail="Recipient not found")
 
     msg = DirectMessage(
@@ -220,7 +218,7 @@ async def sync_from_slack(
 
     # 3. Build a map of slack_user_id → Synkro User (for the user's team)
     team_users_result = await db.execute(
-        select(User).where(User.team_id == current_user.team_id, User.is_active == True)
+        select(User).where(User.is_active == True)
     )
     team_users = team_users_result.scalars().all()
 
