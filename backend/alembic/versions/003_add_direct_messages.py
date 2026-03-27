@@ -14,17 +14,18 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        'direct_messages',
-        sa.Column('id', sa.String(36), primary_key=True),
-        sa.Column('sender_id', sa.String(36), sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
-        sa.Column('recipient_id', sa.String(36), sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
-        sa.Column('content', sa.Text(), nullable=False),
-        sa.Column('created_at', sa.DateTime(), nullable=False),
-        sa.Column('read_at', sa.DateTime(), nullable=True),
-        sa.Column('slack_ts', sa.String(32), nullable=True),
-    )
-    op.create_index('ix_direct_messages_slack_ts', 'direct_messages', ['slack_ts'])
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS direct_messages (
+            id VARCHAR(36) PRIMARY KEY,
+            sender_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            recipient_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL,
+            read_at TIMESTAMP,
+            slack_ts VARCHAR(32)
+        )
+    """)
+    op.execute("CREATE INDEX IF NOT EXISTS ix_direct_messages_slack_ts ON direct_messages (slack_ts)")
 
 
 def downgrade() -> None:

@@ -15,12 +15,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Add entities JSON column if it doesn't exist
-    # Using batch_alter_table for SQLite compatibility
-    with op.batch_alter_table('messages', schema=None) as batch_op:
-        batch_op.add_column(
-            sa.Column('entities', sa.JSON(), nullable=True, server_default='{}')
-        )
+    # Use IF NOT EXISTS so this is idempotent on PostgreSQL
+    op.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS entities JSON DEFAULT '{}'")
+    op.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS external_id VARCHAR(255)")
 
 
 def downgrade() -> None:

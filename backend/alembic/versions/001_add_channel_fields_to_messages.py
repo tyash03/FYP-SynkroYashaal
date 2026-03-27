@@ -14,11 +14,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Add channel_id and channel_type columns to messages table
-    # Using batch_alter_table for SQLite compatibility in dev
-    with op.batch_alter_table('messages', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('channel_id', sa.String(255), nullable=True))
-        batch_op.add_column(sa.Column('channel_type', sa.String(50), nullable=True))
+    op.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS channel_id VARCHAR(255)")
+    op.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS channel_type VARCHAR(50)")
 
 
 def downgrade() -> None:
