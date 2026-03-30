@@ -146,13 +146,18 @@ async def create_task(
                 detail="Assignee not found or not in your team"
             )
 
+    # Strip timezone from due_date — DB column is TIMESTAMP WITHOUT TIME ZONE
+    due_date = task_data.due_date
+    if due_date is not None and hasattr(due_date, 'tzinfo') and due_date.tzinfo is not None:
+        due_date = due_date.replace(tzinfo=None)
+
     # Create new task
     new_task = Task(
         title=task_data.title,
         description=task_data.description,
         status=task_data.status,
         priority=task_data.priority,
-        due_date=task_data.due_date,
+        due_date=due_date,
         estimated_hours=task_data.estimated_hours,
         assignee_id=task_data.assignee_id,
         created_by_id=current_user.id,
