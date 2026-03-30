@@ -28,7 +28,7 @@ import logging
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -215,6 +215,10 @@ async def slack_events(
         except Exception as exc:
             logger.warning("Could not resolve Slack user %s: %s", slack_user_id, exc)
 
+    # Determine direction: if the Slack sender is the integration owner → "sent"
+    authed_user_id = (integration.platform_metadata or {}).get("authed_user_id")
+    direction = "sent" if (slack_user_id and slack_user_id == authed_user_id) else "received"
+
     msg = Message(
         external_id=external_id or None,
         platform="slack",
@@ -226,6 +230,7 @@ async def slack_events(
         channel_id=event.get("channel"),
         channel_type=event.get("channel_type"),
         user_id=integration.user_id,
+        entities={"direction": direction},
     )
     db.add(msg)
     await db.commit()
@@ -240,31 +245,59 @@ async def slack_events(
     )
 
     # ── 7b. For DM channels: also create a DirectMessage record ──────────────
-    # This syncs user-to-user Slack DMs into Synkro's native DM system in
-    # real-time when the Events API delivers message.im events.
-    # Requires: user tokens with im:history (user_scope in OAuth), and each
-    # user's authed_user_id stored in their Integration metadata.
+    # Handles two cases:
+    # 1. User-to-user Slack DMs when both users have connected Slack individually
+    #    (matched via authed_user_id in each user's Integration metadata)
+    # 2. Replies to bot relay notifications — user DMs the bot in Slack and
+    #    we route it back into Synkro using email lookup via the bot token
     if channel_type_evt == "im" and slack_sender_id:
-        # Find the Synkro user whose Slack ID matches the sender
+        sender_synkro_id = None
+        recipient_synkro_id = None
+
+        # Strategy 1: match sender by authed_user_id (user has their own OAuth token)
         sender_integration = next(
             (i for i in all_integrations
              if (i.platform_metadata or {}).get("authed_user_id") == slack_sender_id),
             None,
         )
-        # Find the Synkro user who owns this integration (the recipient)
-        # They are the one whose user token triggered delivery of this event
-        # (i.e. the integration record we resolved earlier)
         if sender_integration and sender_integration.id != integration.id:
             sender_synkro_id = sender_integration.user_id
             recipient_synkro_id = integration.user_id
         elif sender_integration and sender_integration.id == integration.id:
-            # Sender IS the integration owner — other party is not tracked
             sender_synkro_id = integration.user_id
-            recipient_synkro_id = None
+            # recipient unknown from this side alone
         else:
-            # Try: sender is unknown in Synkro; recipient is integration owner
-            sender_synkro_id = None
-            recipient_synkro_id = integration.user_id
+            # Strategy 2: sender has no OAuth token — look up by email via bot token
+            # This handles replies to bot relay notifications from users like zain/fizzah
+            try:
+                bot_svc = SlackService.from_integration(integration)
+                user_info = await bot_svc.get_user_info(slack_sender_id)
+                profile = user_info.get("profile", {})
+                sender_email = profile.get("email", "").lower()
+                await bot_svc.aclose()
+                if sender_email:
+                    sender_user_result = await db.execute(
+                        select(User).where(User.email == sender_email, User.is_active == True)
+                    )
+                    sender_user = sender_user_result.scalar_one_or_none()
+                    if sender_user:
+                        sender_synkro_id = sender_user.id
+                        # Find most recent DM they received to determine who to reply to
+                        last_received_result = await db.execute(
+                            select(DirectMessage)
+                            .where(DirectMessage.recipient_id == sender_user.id)
+                            .order_by(DirectMessage.created_at.desc())
+                            .limit(1)
+                        )
+                        last_dm = last_received_result.scalar_one_or_none()
+                        if last_dm:
+                            recipient_synkro_id = last_dm.sender_id
+                        logger.info(
+                            "Bot DM reply routed: slack_uid=%s email=%s synkro_id=%s → recipient=%s",
+                            slack_sender_id, sender_email, sender_synkro_id, recipient_synkro_id,
+                        )
+            except Exception as exc:
+                logger.warning("Could not resolve bot DM sender %s: %s", slack_sender_id, exc)
 
         if sender_synkro_id and recipient_synkro_id:
             # Dedup by slack_ts
