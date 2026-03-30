@@ -1,6 +1,6 @@
 """Pydantic schemas for Task model"""
-from pydantic import BaseModel, Field
-from datetime import datetime
+from pydantic import BaseModel, Field, field_validator
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -12,6 +12,14 @@ class TaskBase(BaseModel):
     priority: str = Field(default="medium")
     due_date: Optional[datetime] = None
     estimated_hours: Optional[int] = Field(None, ge=0)
+
+    @field_validator("due_date", mode="before")
+    @classmethod
+    def strip_timezone(cls, v):
+        """Strip timezone info so it matches TIMESTAMP WITHOUT TIME ZONE columns."""
+        if isinstance(v, datetime) and v.tzinfo is not None:
+            return v.replace(tzinfo=None)
+        return v
 
 
 class TaskCreate(TaskBase):
@@ -30,6 +38,13 @@ class TaskUpdate(BaseModel):
     assignee_id: Optional[str] = None
     due_date: Optional[datetime] = None
     estimated_hours: Optional[int] = Field(None, ge=0)
+
+    @field_validator("due_date", mode="before")
+    @classmethod
+    def strip_timezone(cls, v):
+        if isinstance(v, datetime) and v.tzinfo is not None:
+            return v.replace(tzinfo=None)
+        return v
 
 
 class TaskResponse(TaskBase):

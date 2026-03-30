@@ -5,7 +5,6 @@ from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import datetime
-import asyncio
 
 from app.database import get_db
 from app.models import Task, User, TaskStatus, Integration, IntegrationPlatform
@@ -166,6 +165,22 @@ async def create_task(
     await db.commit()
     await db.refresh(new_task)
 
+    # Fire-and-forget: sync to Jira if the user has an active integration
+    try:
+        from app.tasks.integration_tasks import sync_task_to_jira, notify_slack_task_created
+        jira_result = await db.execute(
+            select(Integration).where(
+                Integration.user_id == current_user.id,
+                Integration.platform == IntegrationPlatform.JIRA,
+                Integration.is_active == True,
+            )
+        )
+        if jira_result.scalar_one_or_none():
+            sync_task_to_jira.delay(new_task.id, current_user.id)
+        notify_slack_task_created.delay(new_task.id, current_user.id)
+    except Exception:
+        pass  # Don't fail task creation if background tasks can't be queued
+
     # Load relationships
     await db.refresh(new_task, ["assignee", "creator"])
 
@@ -315,35 +330,77 @@ async def update_task(
     await db.commit()
     await db.refresh(task)
 
-    # After commit, if status changed and jira issue exists, mirror the transition
-    if task.external_id and task.status != old_status:
-        # look for jira integration for user
-        result = await db.execute(
+    # After commit, sync changes to Jira if integration is active
+    if task.external_id:
+        jira_result = await db.execute(
             select(Integration).where(
                 Integration.user_id == current_user.id,
                 Integration.platform == IntegrationPlatform.JIRA,
                 Integration.is_active == True,
             )
         )
-        jira_integration = result.scalar_one_or_none()
+        jira_integration = jira_result.scalar_one_or_none()
         if jira_integration:
+            from app.services.jira_service import JiraService
+            import logging as _logging
+            _logger = _logging.getLogger(__name__)
+            jira = JiraService.from_integration(jira_integration)
             try:
-                from app.services.jira_service import JiraService
-                jira = JiraService(
-                    domain=jira_integration.platform_metadata.get("domain"),
-                    email=jira_integration.platform_metadata.get("email"),
-                    api_token=jira_integration.access_token,
-                )
-                # mapping of task.status to transition id would typically require
-                # a lookup; for demo we assume metadata carries a mapping
-                transition_id = jira_integration.platform_metadata.get(
-                    "status_transitions", {}
-                ).get(task.status.value)
-                if transition_id:
-                    asyncio.run(jira.update_issue_status(task.external_id, transition_id))
+                # Sync field changes (title, description, due_date)
+                field_keys = set(update_data.keys()) - {"status"}
+                if field_keys:
+                    fields = {}
+                    if "title" in field_keys:
+                        fields["summary"] = task.title
+                    if "description" in field_keys and task.description:
+                        fields["description"] = task.description
+                    if "due_date" in field_keys:
+                        fields["duedate"] = (
+                            task.due_date.strftime("%Y-%m-%d") if task.due_date else None
+                        )
+                        if fields["duedate"] is None:
+                            fields.pop("duedate")
+                    if fields:
+                        await jira.update_issue_fields(task.external_id, fields)
+
+                # Sync status change via dynamic transition lookup
+                if task.status != old_status:
+                    # Map internal status → likely Jira status name
+                    STATUS_NAME_MAP = {
+                        "todo": ["to do", "open", "backlog"],
+                        "in_progress": ["in progress", "in development", "start"],
+                        "done": ["done", "closed", "resolved", "complete"],
+                        "blocked": ["blocked", "on hold", "impediment"],
+                    }
+                    target_names = STATUS_NAME_MAP.get(task.status.value, [])
+                    transitions = await jira.get_transitions(task.external_id)
+                    transition_id = None
+                    for t in transitions:
+                        t_name = t.get("name", "").lower()
+                        if any(n in t_name for n in target_names):
+                            transition_id = t["id"]
+                            break
+                    if transition_id:
+                        await jira.update_issue_status(task.external_id, transition_id)
+                    else:
+                        _logger.info(
+                            "No matching Jira transition for status %s on issue %s",
+                            task.status.value,
+                            task.external_id,
+                        )
             except Exception as sync_err:
-                logger = logging.getLogger(__name__)
-                logger.error("failed to sync jira status for task %s: %s", task.id, sync_err)
+                _logger.error(
+                    "Failed to sync Jira for task %s: %s", task.id, sync_err
+                )
+            finally:
+                await jira.aclose()
+    elif update_data:
+        # Task not yet in Jira — enqueue creation
+        try:
+            from app.tasks.integration_tasks import sync_task_to_jira
+            sync_task_to_jira.delay(task.id, current_user.id)
+        except Exception:
+            pass
 
     # Load relationships
     await db.refresh(task, ["assignee", "creator"])
