@@ -16,7 +16,12 @@ class TaskBase(BaseModel):
     @field_validator("due_date", mode="before")
     @classmethod
     def strip_timezone(cls, v):
-        """Strip timezone info so it matches TIMESTAMP WITHOUT TIME ZONE columns."""
+        """Strip timezone so it matches TIMESTAMP WITHOUT TIME ZONE columns."""
+        if v is None:
+            return v
+        if isinstance(v, str):
+            # Parse ISO string and strip timezone
+            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
         if isinstance(v, datetime) and v.tzinfo is not None:
             return v.replace(tzinfo=None)
         return v
@@ -42,6 +47,10 @@ class TaskUpdate(BaseModel):
     @field_validator("due_date", mode="before")
     @classmethod
     def strip_timezone(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, str):
+            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
         if isinstance(v, datetime) and v.tzinfo is not None:
             return v.replace(tzinfo=None)
         return v
