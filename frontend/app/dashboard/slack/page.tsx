@@ -1,8 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { messagesApi } from '@/lib/api'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { messagesApi, integrationsApi } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -15,6 +15,7 @@ import {
   Hash,
   X,
   AtSign,
+  Download,
 } from 'lucide-react'
 import { formatRelativeTime } from '@/lib/utils'
 import Link from 'next/link'
@@ -43,6 +44,24 @@ const INTENT_COLORS: Record<string, string> = {
 export default function SlackPage() {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
+  const [syncMsg, setSyncMsg] = useState('')
+
+  const { data: integrationsData } = useQuery({
+    queryKey: ['integrations'],
+    queryFn: async () => (await integrationsApi.getIntegrations()).data,
+  })
+
+  const slackIntegration = (integrationsData as any[])?.find((i: any) => i.platform === 'slack')
+
+  const syncMutation = useMutation({
+    mutationFn: () => integrationsApi.syncIntegration(slackIntegration.id),
+    onSuccess: (res: any) => {
+      setSyncMsg(res.data?.message || 'Sync complete')
+      queryClient.invalidateQueries({ queryKey: ['slack-messages'] })
+      queryClient.invalidateQueries({ queryKey: ['message-stats'] })
+      setTimeout(() => setSyncMsg(''), 4000)
+    },
+  })
 
   const { data: stats } = useQuery({
     queryKey: ['message-stats'],
@@ -73,31 +92,51 @@ export default function SlackPage() {
             {slackCount} messages synced from Slack
           </p>
         </div>
-        <div className="flex gap-2">
-        <Link href="/dashboard/slack/dms">
-          <Button variant="outline">
-            <AtSign className="h-4 w-4 mr-2" />
-            Direct Messages
-          </Button>
-        </Link>
-        <Button
-          variant="outline"
-          onClick={() => {
-            queryClient.invalidateQueries({ queryKey: ['slack-messages'] })
-            queryClient.invalidateQueries({ queryKey: ['message-stats'] })
-            refetch()
-          }}
-          disabled={isFetching}
-        >
-          {isFetching ? (
-            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-          ) : (
-            <RefreshCw className="h-4 w-4 mr-2" />
+        <div className="flex gap-2 flex-wrap">
+          <Link href="/dashboard/slack/dms">
+            <Button variant="outline">
+              <AtSign className="h-4 w-4 mr-2" />
+              Direct Messages
+            </Button>
+          </Link>
+          {slackIntegration && (
+            <Button
+              variant="outline"
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending}
+            >
+              {syncMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Download className="h-4 w-4 mr-2" />
+              )}
+              {syncMutation.isPending ? 'Syncing...' : 'Sync from Slack'}
+            </Button>
           )}
-          {isFetching ? 'Refreshing...' : 'Refresh'}
-        </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              queryClient.invalidateQueries({ queryKey: ['slack-messages'] })
+              queryClient.invalidateQueries({ queryKey: ['message-stats'] })
+              refetch()
+            }}
+            disabled={isFetching}
+          >
+            {isFetching ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            {isFetching ? 'Refreshing...' : 'Refresh'}
+          </Button>
         </div>
       </div>
+
+      {syncMsg && (
+        <div className="rounded-md bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 px-4 py-2 text-sm text-green-800 dark:text-green-300">
+          {syncMsg}
+        </div>
+      )}
 
       {/* Search */}
       <div className="relative max-w-sm">

@@ -113,14 +113,14 @@ export function CreateTaskDialog({ trigger }: CreateTaskDialogProps) {
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[540px]">
-        <form onSubmit={handleSubmit}>
-          <DialogHeader>
+      <DialogContent className="sm:max-w-[540px] max-h-[90vh] flex flex-col">
+        <form onSubmit={handleSubmit} className="flex flex-col min-h-0 flex-1">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Create New Task</DialogTitle>
             <DialogDescription>Add a new task to your team's workspace.</DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
+          <div className="grid gap-4 py-4 overflow-y-auto flex-1 pr-1">
             {error && (
               <div className="rounded-md bg-red-50 dark:bg-red-950 p-3 text-sm text-red-600 dark:text-red-400">
                 {error}
@@ -227,7 +227,7 @@ export function CreateTaskDialog({ trigger }: CreateTaskDialogProps) {
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0 pt-2">
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>

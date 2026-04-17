@@ -597,6 +597,9 @@ async def sync_integration(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
+    from app.models import Message
+    from app.utils.security import decrypt_value
+
     result = await db.execute(
         select(Integration).where(
             and_(
@@ -612,9 +615,63 @@ async def sync_integration(
     if not integration.is_active:
         raise HTTPException(status_code=400, detail="Integration is not active")
 
+    synced_count = 0
+
+    if integration.platform == IntegrationPlatform.SLACK:
+        try:
+            token = decrypt_value(integration.access_token)
+            svc = slack_module.SlackService(token)
+
+            # Fetch all public channels
+            resp = await svc._request("conversations.list", method="GET", params={
+                "types": "public_channel,private_channel",
+                "limit": 200,
+                "exclude_archived": "true",
+            })
+            channels = resp.get("channels", [])
+
+            for ch in channels:
+                ch_id = ch["id"]
+                ch_name = ch.get("name", ch_id)
+                try:
+                    messages = await svc.get_channel_messages(ch_id, limit=50)
+                    for msg in messages:
+                        if not msg.get("text") or msg.get("subtype"):
+                            continue
+                        external_id = msg.get("ts", "")
+                        exists = await db.execute(
+                            select(Message).where(Message.external_id == external_id)
+                        )
+                        if exists.scalar_one_or_none():
+                            continue
+                        from datetime import timezone
+                        ts = float(msg.get("ts", 0))
+                        from datetime import datetime as dt
+                        created = dt.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None) if ts else dt.utcnow()
+                        db.add(Message(
+                            user_id=current_user.id,
+                            platform="slack",
+                            external_id=external_id,
+                            sender_id=msg.get("user", ""),
+                            sender_name=msg.get("user", "unknown"),
+                            content=msg.get("text", ""),
+                            channel_id=ch_id,
+                            channel_name=ch_name,
+                            channel_type="channel",
+                            is_direct=False,
+                            created_at=created,
+                        ))
+                        synced_count += 1
+                except Exception:
+                    continue
+
+            await db.commit()
+        except Exception as e:
+            logger.warning("Slack sync failed: %s", e)
+
     integration.last_synced_at = datetime.utcnow()
     await db.commit()
-    return {"message": "Sync triggered", "integration_id": integration_id}
+    return {"message": f"Sync complete — {synced_count} new messages", "integration_id": integration_id, "synced": synced_count}
 
 
 @router.delete(
