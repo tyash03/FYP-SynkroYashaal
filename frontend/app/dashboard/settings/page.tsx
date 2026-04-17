@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Mail, Link2, Link2Off, RefreshCw, Loader2, CheckCircle2, XCircle,
-  AlertCircle, Users, Shield, UserCheck, UserX, Trash2
+  Users, Shield, UserCheck, UserX, Trash2
 } from 'lucide-react'
 import type { Integration, AdminUserStats, AdminTeamResponse, AdminTeamUser, UserRole } from '@/types'
 import { formatRelativeTime } from '@/lib/utils'
@@ -68,7 +68,7 @@ export default function SettingsPage() {
   }, [searchParams])
 
   // Fetch integrations
-  const { data: integrationsData, isLoading: integrationsLoading } = useQuery<{ data: Integration[] }>({
+  const { data: integrationsData } = useQuery<{ data: Integration[] }>({
     queryKey: ['integrations'],
     queryFn: () => integrationsApi.getIntegrations(),
   })
@@ -177,13 +177,27 @@ export default function SettingsPage() {
     },
   })
 
-  // Disconnect mutation
+  const [disconnectingId, setDisconnectingId] = useState<string | null>(null)
+
+  // Disconnect mutation — shared handler, tracks which integration is being removed
   const disconnectMutation = useMutation({
-    mutationFn: (integrationId: string) => integrationsApi.disconnectIntegration(integrationId),
-    onSuccess: () => {
+    mutationFn: ({ id }: { id: string; name: string }) => {
+      setDisconnectingId(id)
+      return integrationsApi.disconnectIntegration(id)
+    },
+    onSuccess: (_data, { name }) => {
+      setDisconnectingId(null)
       queryClient.invalidateQueries({ queryKey: ['integrations'] })
-      setIntegrationMessage({ type: 'success', text: 'Gmail disconnected' })
+      setIntegrationMessage({ type: 'success', text: `${name} disconnected` })
       setTimeout(() => setIntegrationMessage(null), 3000)
+    },
+    onError: (err: any, { name }) => {
+      setDisconnectingId(null)
+      setIntegrationMessage({
+        type: 'error',
+        text: err.response?.data?.detail || `Failed to disconnect ${name}. Please try again.`,
+      })
+      setTimeout(() => setIntegrationMessage(null), 5000)
     },
   })
 
@@ -300,7 +314,7 @@ export default function SettingsPage() {
 
   const handleDisconnect = (integrationId: string, name: string) => {
     if (confirm(`Are you sure you want to disconnect ${name}?`)) {
-      disconnectMutation.mutate(integrationId)
+      disconnectMutation.mutate({ id: integrationId, name })
     }
   }
 
@@ -680,11 +694,11 @@ export default function SettingsPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => handleDisconnect(gmailIntegration.id, 'Gmail')}
-                        disabled={disconnectMutation.isPending}
+                        disabled={disconnectingId === gmailIntegration.id}
                         className="text-red-600 hover:text-red-700 hover:bg-red-50"
                         title="Disconnect"
                       >
-                        {disconnectMutation.isPending ? (
+                        {disconnectingId === gmailIntegration.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <Link2Off className="h-4 w-4" />
@@ -824,11 +838,11 @@ export default function SettingsPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => handleDisconnect(slackIntegration.id, 'Slack')}
-                        disabled={disconnectMutation.isPending}
+                        disabled={disconnectingId === slackIntegration.id}
                         className="text-red-600 hover:text-red-700 hover:bg-red-50"
                         title="Disconnect"
                       >
-                        {disconnectMutation.isPending ? (
+                        {disconnectingId === slackIntegration.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <Link2Off className="h-4 w-4" />
@@ -909,11 +923,11 @@ export default function SettingsPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => handleDisconnect(jiraIntegration.id, 'Jira')}
-                        disabled={disconnectMutation.isPending}
+                        disabled={disconnectingId === jiraIntegration.id}
                         className="text-red-600 hover:text-red-700 hover:bg-red-50"
                         title="Disconnect"
                       >
-                        {disconnectMutation.isPending ? (
+                        {disconnectingId === jiraIntegration.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <Link2Off className="h-4 w-4" />

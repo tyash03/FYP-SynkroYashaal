@@ -204,7 +204,9 @@ export const dmApi = {
   getConversation: (userId: string) => api.get(`/api/dm/${userId}`),
   sendMessage: (recipient_id: string, content: string) =>
     api.post('/api/dm/send', { recipient_id, content }),
-  syncFromSlack: () => api.post<{ synced: number; message: string }>('/api/dm/sync-slack'),
+  getUnreadCount: () => api.get<{ unread: number }>('/api/dm/unread-count'),
+  clearAllDms: () => api.delete('/api/dm/clear-all'),
+  deleteMessage: (messageId: string) => api.delete(`/api/dm/message/${messageId}`),
 }
 
 // Analytics API

@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_, and_
 from typing import Optional
 
 from app.database import get_db
@@ -22,9 +22,19 @@ async def list_messages(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Message).where(Message.user_id == current_user.id)
-    if platform:
-        query = query.where(Message.platform == platform)
+    # Slack channel messages (not DMs) are workspace-wide — visible to all users.
+    # DM messages and non-Slack messages remain scoped to the owning user.
+    if platform == "slack":
+        query = select(Message).where(
+            Message.platform == "slack",
+            # Exclude DMs (im/mpim) from the shared view — those stay personal
+            Message.channel_type.notin_(["im", "mpim"]),
+        )
+    else:
+        query = select(Message).where(Message.user_id == current_user.id)
+        if platform:
+            query = query.where(Message.platform == platform)
+
     if search:
         query = query.where(Message.content.ilike(f"%{search}%"))
     if channel_type:
@@ -59,10 +69,11 @@ async def message_stats(
         select(func.count()).select_from(Message).where(Message.user_id == current_user.id)
     )
     total = result.scalar() or 0
+    # Slack channel messages are workspace-wide
     result2 = await db.execute(
         select(func.count()).select_from(Message).where(
-            Message.user_id == current_user.id,
             Message.platform == "slack",
+            Message.channel_type.notin_(["im", "mpim"]),
         )
     )
     slack_count = result2.scalar() or 0
@@ -107,7 +118,7 @@ async def list_dm_conversations(
                 "channel_id": m.channel_id,
                 "channel_type": m.channel_type,
                 "sender_name": display_name,
-                "slack_user_id": entities.get("recipient_id") if is_sent else None,
+                "slack_user_id": entities.get("recipient_id") if is_sent else entities.get("slack_sender_id"),
                 "last_message": m.content,
                 "last_timestamp": (m.timestamp.isoformat() + "Z") if m.timestamp else None,
                 "unread_count": 0,
@@ -174,7 +185,7 @@ async def send_dm(
     finally:
         await slack.aclose()
 
-    # Save sent message to DB so it appears in the conversation list
+    # Save sent message under the sender so they can see it in their DM list
     sent_msg = Message(
         external_id=f"sent-{_uuid.uuid4()}",
         platform="slack",
@@ -188,6 +199,42 @@ async def send_dm(
         entities={"recipient_name": recipient_name, "recipient_id": body.slack_user_id, "direction": "sent"},
     )
     db.add(sent_msg)
+
+    # Also save a "received" copy for the recipient if they are a Synkro user,
+    # so ONLY the recipient (and sender) can see this DM — not everyone else.
+    recipient_integration_result = await db.execute(
+        select(Integration).where(
+            Integration.platform == IntegrationPlatform.SLACK,
+            Integration.is_active == True,
+        )
+    )
+    all_slack_integrations = recipient_integration_result.scalars().all()
+    recipient_integration = next(
+        (i for i in all_slack_integrations
+         if (i.platform_metadata or {}).get("authed_user_id") == body.slack_user_id
+         and i.user_id != current_user.id),
+        None,
+    )
+    if recipient_integration:
+        received_msg = Message(
+            external_id=f"recv-{_uuid.uuid4()}",
+            platform="slack",
+            sender_name=current_user.full_name or current_user.email,
+            sender_email=current_user.email,
+            content=body.message,
+            timestamp=datetime.utcnow(),
+            channel_id=channel_id,
+            channel_type="im",
+            user_id=recipient_integration.user_id,
+            entities={
+                "direction": "received",
+                "slack_sender_id": (integration.platform_metadata or {}).get("authed_user_id", ""),
+                "recipient_id": body.slack_user_id,
+                "recipient_name": recipient_name,
+            },
+        )
+        db.add(received_msg)
+
     await db.commit()
 
     return {"ok": True, "channel_id": channel_id}

@@ -340,6 +340,20 @@ def process_message_for_intent(message_id: str):
                         except Exception:
                             logger.warning("unable to parse deadline %s", entities.get("deadline"))
 
+                    # Look up the user separately — Message has no .user relationship
+                    from app.models.user import User as UserModel
+                    msg_user = db.execute(
+                        select(UserModel).where(UserModel.id == message.user_id)
+                    ).scalar_one_or_none()
+                    if msg_user is None or not msg_user.team_id:
+                        logger.warning(
+                            "Cannot create task from message %s: user %s has no team",
+                            message_id, message.user_id,
+                        )
+                        message.processed = True
+                        db.commit()
+                        return {"status": "skipped", "message_id": message_id, "reason": "no_team"}
+
                     task = Task(
                         title=title,
                         description=description,
@@ -347,7 +361,7 @@ def process_message_for_intent(message_id: str):
                         due_date=due_date,
                         source_type=TaskSourceType.MESSAGE,
                         source_id=message.id,
-                        team_id=message.user.team_id,
+                        team_id=msg_user.team_id,
                         created_by_id=message.user_id,
                     )
                     db.add(task)

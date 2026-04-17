@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/lib/stores/authStore'
 import { useThemeStore } from '@/lib/stores/themeStore'
 import {
@@ -24,6 +25,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn, getInitials, getAvatarColor } from '@/lib/utils'
 import { ROLE_LABELS } from '@/types'
+import { dmApi } from '@/lib/api'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -47,6 +49,14 @@ export default function DashboardLayout({
   const { user, isAuthenticated, isLoading, logout, fetchUser } = useAuthStore()
   const { theme, toggleTheme } = useThemeStore()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const queryClient = useQueryClient()
+
+  const { data: unreadData } = useQuery({
+    queryKey: ['dm-unread-count', user?.id],
+    queryFn: async () => (await dmApi.getUnreadCount()).data as { unread: number },
+    refetchInterval: 10000,
+    enabled: isAuthenticated && !!user?.id,
+  })
 
   useEffect(() => {
     // Wait for auth initialization to complete before redirecting
@@ -66,6 +76,8 @@ export default function DashboardLayout({
 
   const handleLogout = () => {
     logout()
+    // Wipe entire React Query cache so the next user never sees this user's data
+    queryClient.clear()
     router.push('/login')
   }
 
@@ -84,7 +96,7 @@ export default function DashboardLayout({
   const roleLabel = ROLE_LABELS[user.role] || user.role
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 overflow-x-hidden">
       {/* Mobile sidebar backdrop */}
       {sidebarOpen && (
         <div
@@ -113,9 +125,10 @@ export default function DashboardLayout({
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 space-y-1 px-3 py-4">
+          <nav className="flex-1 overflow-y-auto space-y-1 px-3 py-4">
             {navigation.map((item) => {
               const isActive = pathname === item.href
+              const unread = item.href === '/dashboard/messages' ? (unreadData?.unread ?? 0) : 0
               return (
                 <Link
                   key={item.name}
@@ -129,7 +142,12 @@ export default function DashboardLayout({
                   onClick={() => setSidebarOpen(false)}
                 >
                   <item.icon className="h-5 w-5" />
-                  {item.name}
+                  <span className="flex-1">{item.name}</span>
+                  {unread > 0 && (
+                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white">
+                      {unread > 99 ? '99+' : unread}
+                    </span>
+                  )}
                 </Link>
               )
             })}
@@ -181,7 +199,7 @@ export default function DashboardLayout({
       </aside>
 
       {/* Main content */}
-      <div className="lg:pl-64">
+      <div className="lg:pl-64 min-w-0">
         {/* Top bar */}
         <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 sm:px-6">
           <button
@@ -212,7 +230,7 @@ export default function DashboardLayout({
         </header>
 
         {/* Page content */}
-        <main className="p-4 sm:p-6 lg:p-8">
+        <main className="p-4 sm:p-6 lg:p-8 min-w-0 overflow-x-hidden">
           {children}
         </main>
       </div>

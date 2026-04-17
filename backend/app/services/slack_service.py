@@ -50,6 +50,8 @@ _USER_SCOPES: List[str] = [
     "im:history",
     "im:read",
     "channels:history",
+    "users:read",
+    "users:read.email",
 ]
 
 
@@ -255,6 +257,35 @@ class SlackService:
 
     # ── User / channel metadata ──────────────────────────────────────────────
 
+    async def auth_test(self) -> Dict[str, Any]:
+        """Call auth.test to get the identity of the token owner.
+
+        Returns dict with at minimum ``user_id`` key (the Slack user ID of
+        whoever owns this token).
+        """
+        resp = await self._request("auth.test", method="GET")
+        return resp
+
+    async def lookup_user_by_email(self, email: str) -> Optional[str]:
+        """Look up a Slack user ID by email address.
+
+        Requires ``users:read.email`` scope on the token.
+
+        Args:
+            email: The email address to look up.
+
+        Returns:
+            Slack user ID string (e.g. ``U01234``) or ``None`` if not found.
+        """
+        try:
+            resp = await self._request(
+                "users.lookupByEmail", method="GET", params={"email": email}
+            )
+            return resp.get("user", {}).get("id")
+        except Exception as exc:
+            logger.warning("lookup_user_by_email(%s) failed: %s", email, exc)
+            return None
+
     async def get_user_info(self, user_id: str) -> Dict[str, Any]:
         """Fetch a Slack user's profile (requires ``users:read`` scope).
 
@@ -284,20 +315,30 @@ class SlackService:
         )
         return resp["channel"]["id"]
 
-    async def list_workspace_users(self, limit: int = 200) -> List[Dict[str, Any]]:
-        """List non-bot, non-deleted workspace members.
+    async def list_workspace_users(self) -> List[Dict[str, Any]]:
+        """List ALL non-bot, non-deleted workspace members using cursor pagination.
 
         Returns:
             List of user dicts (id, name, real_name, profile).
         """
-        resp = await self._request(
-            "users.list", method="GET", params={"limit": limit}
-        )
-        members = resp.get("members", [])
-        return [
-            m for m in members
-            if not m.get("is_bot") and not m.get("deleted") and m.get("id") != "USLACKBOT"
-        ]
+        all_members: List[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+
+        while True:
+            params: Dict[str, Any] = {"limit": 200}
+            if cursor:
+                params["cursor"] = cursor
+            resp = await self._request("users.list", method="GET", params=params)
+            members = resp.get("members", [])
+            all_members.extend(
+                m for m in members
+                if not m.get("is_bot") and not m.get("deleted") and m.get("id") != "USLACKBOT"
+            )
+            cursor = resp.get("response_metadata", {}).get("next_cursor")
+            if not cursor:
+                break
+
+        return all_members
 
     async def list_im_channels(self) -> List[Dict[str, Any]]:
         """List all DM (im) channels accessible to this token.
@@ -343,6 +384,16 @@ class SlackService:
             params["oldest"] = oldest
         resp = await self._request("conversations.history", method="GET", params=params)
         return resp.get("messages", [])
+
+    async def get_channel_members(self, channel_id: str) -> List[str]:
+        """Return list of Slack user IDs in a channel/DM.
+
+        Works with tokens that have ``channels:read`` or ``im:read`` scope.
+        """
+        resp = await self._request(
+            "conversations.members", method="GET", params={"channel": channel_id}
+        )
+        return resp.get("members", [])
 
     async def get_channel_info(self, channel_id: str) -> Dict[str, Any]:
         """Fetch channel metadata (requires ``channels:read`` scope).

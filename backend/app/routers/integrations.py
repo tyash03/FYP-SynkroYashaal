@@ -457,11 +457,14 @@ async def connect_jira(
             and_(
                 Integration.user_id == current_user.id,
                 Integration.platform == IntegrationPlatform.JIRA,
-                Integration.platform_metadata["domain"].astext == request.domain,
             )
         )
     )
-    integration = existing_q.scalar_one_or_none()
+    all_jira = existing_q.scalars().all()
+    integration = next(
+        (i for i in all_jira if (i.platform_metadata or {}).get("domain") == request.domain),
+        None,
+    )
 
     metadata: Dict[str, Any] = {
         "domain": request.domain,
