@@ -27,8 +27,12 @@ async def list_messages(
     if platform == "slack":
         query = select(Message).where(
             Message.platform == "slack",
-            # Exclude DMs (im/mpim) from the shared view — those stay personal
-            Message.channel_type.notin_(["im", "mpim"]),
+            # Exclude DMs; also include rows where channel_type is NULL
+            # (NOT IN drops NULLs in SQL, so we must handle them explicitly)
+            or_(
+                Message.channel_type.notin_(["im", "mpim"]),
+                Message.channel_type.is_(None),
+            ),
         )
     else:
         query = select(Message).where(Message.user_id == current_user.id)
@@ -73,7 +77,10 @@ async def message_stats(
     result2 = await db.execute(
         select(func.count()).select_from(Message).where(
             Message.platform == "slack",
-            Message.channel_type.notin_(["im", "mpim"]),
+            or_(
+                Message.channel_type.notin_(["im", "mpim"]),
+                Message.channel_type.is_(None),
+            ),
         )
     )
     slack_count = result2.scalar() or 0

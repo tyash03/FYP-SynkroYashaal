@@ -630,39 +630,44 @@ async def sync_integration(
             })
             channels = resp.get("channels", [])
 
+            from datetime import timezone, datetime as dt
             for ch in channels:
                 ch_id = ch["id"]
-                ch_name = ch.get("name", ch_id)
+                # Join the channel if the bot isn't already a member so that
+                # conversations.history (and future webhook events) will work.
+                if not ch.get("is_member"):
+                    await svc.join_channel(ch_id)
                 try:
                     messages = await svc.get_channel_messages(ch_id, limit=50)
                     for msg in messages:
                         if not msg.get("text") or msg.get("subtype"):
                             continue
                         external_id = msg.get("ts", "")
+                        if not external_id:
+                            continue
                         exists = await db.execute(
-                            select(Message).where(Message.external_id == external_id)
+                            select(Message).where(
+                                Message.external_id == external_id,
+                                Message.user_id == current_user.id,
+                            )
                         )
                         if exists.scalar_one_or_none():
                             continue
-                        from datetime import timezone
-                        ts = float(msg.get("ts", 0))
-                        from datetime import datetime as dt
-                        created = dt.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None) if ts else dt.utcnow()
+                        ts_val = float(msg.get("ts", 0))
+                        msg_time = dt.fromtimestamp(ts_val, tz=timezone.utc).replace(tzinfo=None) if ts_val else dt.utcnow()
                         db.add(Message(
                             user_id=current_user.id,
                             platform="slack",
                             external_id=external_id,
-                            sender_id=msg.get("user", ""),
                             sender_name=msg.get("user", "unknown"),
                             content=msg.get("text", ""),
                             channel_id=ch_id,
-                            channel_name=ch_name,
                             channel_type="channel",
-                            is_direct=False,
-                            created_at=created,
+                            timestamp=msg_time,
                         ))
                         synced_count += 1
-                except Exception:
+                except Exception as ch_err:
+                    logger.warning("Slack sync failed for channel %s: %s", ch_id, ch_err)
                     continue
 
             await db.commit()
